@@ -1,5 +1,8 @@
+venv/
+.venv/
+__pycache__/
+*.pyc
+.env
+*.spec
 dist/
 build/
-venv/
-__pycache__/
-output.mkdir/.env
