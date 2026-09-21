@@ -54,10 +54,10 @@ panda3d-simplepbr==0.13.1
 
 pefile==2024.8.26
 pillow==12.3.0
-pipwin==0.5.2
+
 protobuf==7.36.1
 pyarrow==25.0.1
-PyAudio==0.2.14
+
 pydeck==0.9.3
 pygun==0.0.1a0
 pyinstaller==6.22.3
