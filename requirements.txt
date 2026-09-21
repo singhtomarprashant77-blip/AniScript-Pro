@@ -75,7 +75,6 @@ python-dotenv==1.2.3
 python-multipart==0.0.32
 pyttsx3==2.99
 pytz==2024.2
-pywin32==311
 pywin32-ctypes==0.2.3
 PyYAML==6.0.3
 referencing==0.37.0
