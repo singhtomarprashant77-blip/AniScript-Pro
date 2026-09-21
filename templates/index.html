@@ -691,638 +691,924 @@
 
 <script>
 
-/* =====================================================
-   GLOBAL SOURCE LANGUAGE
-===================================================== */
-
-window.currentSourceLanguage = "";
-
-
-/* =====================================================
-   GET AVAILABLE LANGUAGES
-===================================================== */
-
-async function getLanguages() {
-
-    const url =
-        document.getElementById("youtubeUrl").value.trim();
-
-    const select =
-        document.getElementById("transcriptLanguage");
-
-    if (!url) {
-
-        showStatus(
-            "⚠️ Please enter a YouTube URL."
-        );
-
-        return;
-    }
-
-    showStatus(
-        '<span class="loader"></span> Finding available transcript languages...'
-    );
-
-    select.innerHTML = `
-        <option value="">
-            Loading languages...
-        </option>
-    `;
-
-    try {
-
-        const response =
-            await fetch("/languages", {
-
-                method: "POST",
-
-                headers: {
-                    "Content-Type": "application/json"
-                },
-
-                body: JSON.stringify({
-                    url: url
-                })
-
-            });
-
-        const data =
-            await response.json();
-
-        if (!data.success) {
-
-            throw new Error(
-                data.message
+    /* =====================================================
+       GLOBAL VARIABLES
+    ===================================================== */
+    
+    window.currentSourceLanguage = "";
+    
+    let languageRequestRunning = false;
+    let transcriptRequestRunning = false;
+    let translationRequestRunning = false;
+    
+    
+    /* =====================================================
+       GET AVAILABLE LANGUAGES
+    ===================================================== */
+    
+    async function getLanguages() {
+    
+        const url =
+            document.getElementById("youtubeUrl").value.trim();
+    
+        const select =
+            document.getElementById("transcriptLanguage");
+    
+        const button =
+            document.querySelector(
+                'button[onclick="getLanguages()"]'
             );
-
-        }
-
-        select.innerHTML = `
-            <option value="">
-                Select Transcript Language
-            </option>
-        `;
-
-        if (
-            !data.languages ||
-            data.languages.length === 0
-        ) {
-
-            select.innerHTML = `
-                <option value="">
-                    No transcript available
-                </option>
-            `;
-
+    
+        if (!url) {
+    
             showStatus(
-                "❌ No transcript languages found."
+                "⚠️ Please enter a YouTube URL."
             );
-
+    
             return;
         }
-
-        data.languages.forEach(
-            language => {
-
-                const option =
-                    document.createElement("option");
-
-                option.value =
-                    language.language_code;
-
-                let label =
-                    language.language;
-
-                if (language.is_generated) {
-
-                    label +=
-                        " — Auto-generated";
-
-                } else {
-
-                    label +=
-                        " — Manual";
-
-                }
-
-                option.textContent =
-                    label;
-
-                select.appendChild(
-                    option
-                );
-
-            }
-        );
-
-        showStatus(
-            `✅ ${data.languages.length} transcript language(s) found.`
-        );
-
-    } catch (error) {
-
+    
+    
+        /*
+           Prevent multiple requests
+        */
+    
+        if (languageRequestRunning) {
+    
+            return;
+    
+        }
+    
+    
+        languageRequestRunning = true;
+    
+        button.disabled = true;
+    
+        button.innerHTML =
+            '<span class="loader"></span> Checking captions...';
+    
+    
         select.innerHTML = `
             <option value="">
-                Select Transcript Language
+                Checking YouTube captions...
             </option>
         `;
-
+    
+    
         showStatus(
-            "❌ " + error.message
+            '<span class="loader"></span> Finding available transcript languages...'
         );
-
-    }
-
-}
-
-
-/* =====================================================
-   GET TRANSCRIPT
-===================================================== */
-
-async function getTranscript() {
-
-    const url =
-        document.getElementById("youtubeUrl")
-            .value.trim();
-
-    const languageCode =
-        document.getElementById("transcriptLanguage")
-            .value;
-
-    if (!url) {
-
-        showStatus(
-            "⚠️ Please enter a YouTube URL."
-        );
-
-        return;
-    }
-
-    if (!languageCode) {
-
-        showStatus(
-            "⚠️ Please select transcript language."
-        );
-
-        return;
-    }
-
-    showStatus(
-        '<span class="loader"></span> Extracting transcript...'
-    );
-
-    try {
-
-        const response =
-            await fetch("/transcript", {
-
-                method: "POST",
-
-                headers: {
-                    "Content-Type":
-                        "application/json"
-                },
-
-                body: JSON.stringify({
-
-                    url: url,
-
-                    language_code:
-                        languageCode
-
-                })
-
-            });
-
-        const data =
-            await response.json();
-
-        if (!data.success) {
-
-            throw new Error(
-                data.message
-            );
-
-        }
-
-        document.getElementById(
-            "originalTranscript"
-        ).value = data.text;
-
-
-        document.getElementById(
-            "originalLanguage"
-        ).textContent =
-            data.language;
-
-
-        /*
-         VERY IMPORTANT
-
-         Save actual YouTube transcript language.
-         Example:
-         Hindi = hi
-         English = en
-         Bengali = bn
-        */
-
-        window.currentSourceLanguage =
-            data.language_code ||
-            languageCode;
-
-
-        document.getElementById(
-            "translatedTranscript"
-        ).value = "";
-
-
-        document.getElementById(
-            "translatedLanguage"
-        ).textContent =
-            "TRANSLATED";
-
-
-        showStatus(
-            `✅ ${data.language} transcript extracted successfully.`
-        );
-
-    } catch (error) {
-
-        showStatus(
-            "❌ " + error.message
-        );
-
-    }
-
-}
-
-
-/* =====================================================
-   TRANSLATE TRANSCRIPT
-===================================================== */
-
-async function translateTranscript() {
-
-    const text =
-        document.getElementById(
-            "originalTranscript"
-        ).value.trim();
-
-
-    const targetSelect =
-        document.getElementById(
-            "translationLanguage"
-        );
-
-
-    const targetLanguage =
-        targetSelect.value;
-
-
-    const targetName =
-        targetSelect.options[
-            targetSelect.selectedIndex
-        ].text;
-
-
-    /*
-      Actual source language
-    */
-
-    const sourceLanguage =
-        window.currentSourceLanguage || "";
-
-
-    if (!text) {
-
-        showStatus(
-            "⚠️ First get the original transcript."
-        );
-
-        return;
-    }
-
-
-    if (!sourceLanguage) {
-
-        showStatus(
-            "⚠️ Please get the transcript again before translating."
-        );
-
-        return;
-    }
-
-
-    if (!targetLanguage) {
-
-        showStatus(
-            "⚠️ Please select translation language."
-        );
-
-        return;
-    }
-
-
-    showStatus(
-        '<span class="loader"></span> Translating transcript...'
-    );
-
-
-    try {
-
-        const response =
-            await fetch("/translate", {
-
-                method: "POST",
-
-                headers: {
-                    "Content-Type":
-                        "application/json"
-                },
-
-                body: JSON.stringify({
-
-                    text: text,
-
-                    source_language:
-                        sourceLanguage,
-
-                    target_language:
-                        targetLanguage
-
-                })
-
-            });
-
-
-        const data =
-            await response.json();
-
-
-        if (!data.success) {
-
-            throw new Error(
-                data.message
-            );
-
-        }
-
-
-        document.getElementById(
-            "translatedTranscript"
-        ).value =
-            data.text;
-
-
-        document.getElementById(
-            "translatedLanguage"
-        ).textContent =
-            targetName;
-
-
-        showStatus(
-            `✅ ${targetName} translation completed successfully.`
-        );
-
-
-    } catch (error) {
-
-        showStatus(
-            "❌ " + error.message
-        );
-
-    }
-
-}
-
-
-/* =====================================================
-   DOWNLOAD PDF
-===================================================== */
-
-async function downloadPDF() {
-
-    const original =
-        document.getElementById(
-            "originalTranscript"
-        ).value.trim();
-
-
-    const translated =
-        document.getElementById(
-            "translatedTranscript"
-        ).value.trim();
-
-
-    const targetSelect =
-        document.getElementById(
-            "translationLanguage"
-        );
-
-
-    const targetLanguage =
-        targetSelect.value;
-
-
-    /*
-      Filename language mapping
-    */
-
-    const languageNames = {
-
-        "en": "English",
-        "hi": "Hindi",
-        "bn": "Bengali",
-        "te": "Telugu",
-        "mr": "Marathi",
-        "ta": "Tamil",
-        "gu": "Gujarati",
-        "kn": "Kannada",
-        "ml": "Malayalam",
-        "pa": "Punjabi",
-        "ur": "Urdu",
-        "or": "Odia",
-        "as": "Assamese",
-
-        "es": "Spanish",
-        "fr": "French",
-        "de": "German",
-        "it": "Italian",
-        "pt": "Portuguese",
-
-        "ja": "Japanese",
-        "ko": "Korean",
-        "zh-CN": "Chinese",
-        "ar": "Arabic",
-        "ru": "Russian"
-
-    };
-
-
-    if (!original && !translated) {
-
-        showStatus(
-            "⚠️ There is no transcript to export."
-        );
-
-        return;
-    }
-
-
-    if (!targetLanguage) {
-
-        showStatus(
-            "⚠️ Please select a translation language."
-        );
-
-        return;
-    }
-
-
-    const languageName =
-        languageNames[targetLanguage] ||
-        "Transcript";
-
-
-    showStatus(
-        '<span class="loader"></span> Creating PDF...'
-    );
-
-
-    try {
-
-        const response =
-            await fetch(
-                "/download-pdf",
-                {
-
-                    method: "POST",
-
-                    headers: {
-                        "Content-Type":
-                            "application/json"
-                    },
-
-                    body: JSON.stringify({
-
-                        original_text:
-                            original,
-
-                        translated_text:
-                            translated,
-
-                        source_language:
-                            window.currentSourceLanguage || "",
-
-                        target_language:
-                            targetLanguage
-
-                    })
-
+    
+    
+        try {
+    
+            /*
+               Abort request after 20 seconds
+            */
+    
+            const controller =
+                new AbortController();
+    
+            const timeout =
+                setTimeout(
+                    () => controller.abort(),
+                    20000
+                );
+    
+    
+            const response =
+                await fetch(
+                    "/languages",
+                    {
+                        method: "POST",
+    
+                        headers: {
+                            "Content-Type":
+                                "application/json"
+                        },
+    
+                        body: JSON.stringify({
+                            url: url
+                        }),
+    
+                        signal:
+                            controller.signal
+                    }
+                );
+    
+    
+            clearTimeout(timeout);
+    
+    
+            /*
+               Try to read JSON
+            */
+    
+            let data = {};
+    
+            try {
+    
+                data =
+                    await response.json();
+    
+            } catch (jsonError) {
+    
+                throw new Error(
+                    `Server returned an invalid response (${response.status}).`
+                );
+    
+            }
+    
+    
+            /*
+               Backend error
+            */
+    
+            if (!response.ok || !data.success) {
+    
+                throw new Error(
+                    data.message ||
+                    `Unable to retrieve captions. Server status: ${response.status}`
+                );
+    
+            }
+    
+    
+            /*
+               No languages
+            */
+    
+            if (
+                !Array.isArray(data.languages) ||
+                data.languages.length === 0
+            ) {
+    
+                select.innerHTML = `
+                    <option value="">
+                        No transcript available
+                    </option>
+                `;
+    
+                showStatus(
+                    "❌ No YouTube captions were found for this video."
+                );
+    
+                return;
+            }
+    
+    
+            /*
+               Fill language dropdown
+            */
+    
+            select.innerHTML = `
+                <option value="">
+                    Select Transcript Language
+                </option>
+            `;
+    
+    
+            data.languages.forEach(
+                language => {
+    
+                    const option =
+                        document.createElement(
+                            "option"
+                        );
+    
+    
+                    option.value =
+                        language.language_code;
+    
+    
+                    let label =
+                        language.language ||
+                        language.language_code;
+    
+    
+                    if (
+                        language.is_generated
+                    ) {
+    
+                        label +=
+                            " — Auto-generated";
+    
+                    } else {
+    
+                        label +=
+                            " — Manual";
+    
+                    }
+    
+    
+                    option.textContent =
+                        label;
+    
+    
+                    select.appendChild(
+                        option
+                    );
+    
                 }
             );
-
-
-        if (!response.ok) {
-
-            const data =
-                await response.json().catch(
-                    () => ({})
+    
+    
+            showStatus(
+                `✅ ${data.languages.length} transcript language(s) found.`
+            );
+    
+    
+        } catch (error) {
+    
+            /*
+               Timeout
+            */
+    
+            if (
+                error.name ===
+                "AbortError"
+            ) {
+    
+                showStatus(
+                    "❌ Request timed out. YouTube did not respond within 20 seconds."
                 );
-
-            throw new Error(
-                data.message ||
-                "PDF generation failed."
-            );
-
+    
+            } else {
+    
+                showStatus(
+                    "❌ " +
+                    (
+                        error.message ||
+                        "Failed to retrieve YouTube captions."
+                    )
+                );
+    
+            }
+    
+    
+            select.innerHTML = `
+                <option value="">
+                    Select Transcript Language
+                </option>
+            `;
+    
+        } finally {
+    
+            languageRequestRunning = false;
+    
+            button.disabled = false;
+    
+            button.innerHTML =
+                "🌐 Find Available Languages";
+    
         }
-
-
-        const blob =
-            await response.blob();
-
-
-        const downloadUrl =
-            window.URL.createObjectURL(
-                blob
-            );
-
-
-        const a =
-            document.createElement("a");
-
-
-        a.href =
-            downloadUrl;
-
-
-        /*
-          Selected language filename
-
-          Bengali -> AniScript_Bengali.pdf
-          Tamil   -> AniScript_Tamil.pdf
-          Hindi   -> AniScript_Hindi.pdf
-          English -> AniScript_English.pdf
-        */
-
-        a.download =
-            `AniScript_${languageName}.pdf`;
-
-
-        document.body.appendChild(a);
-
-
-        a.click();
-
-
-        a.remove();
-
-
-        window.URL.revokeObjectURL(
-            downloadUrl
-        );
-
-
-        showStatus(
-            `✅ AniScript_${languageName}.pdf downloaded successfully.`
-        );
-
-
-    } catch (error) {
-
-        showStatus(
-            "❌ " + error.message
-        );
-
+    
     }
-
-}
-
-
-/* =====================================================
-   STATUS
-===================================================== */
-
-function showStatus(message) {
-
-    const status =
-        document.getElementById(
-            "status"
+    
+    
+    /* =====================================================
+       GET TRANSCRIPT
+    ===================================================== */
+    
+    async function getTranscript() {
+    
+        const url =
+            document.getElementById(
+                "youtubeUrl"
+            ).value.trim();
+    
+    
+        const languageCode =
+            document.getElementById(
+                "transcriptLanguage"
+            ).value;
+    
+    
+        const button =
+            document.querySelector(
+                'button[onclick="getTranscript()"]'
+            );
+    
+    
+        if (!url) {
+    
+            showStatus(
+                "⚠️ Please enter a YouTube URL."
+            );
+    
+            return;
+        }
+    
+    
+        if (!languageCode) {
+    
+            showStatus(
+                "⚠️ Please select transcript language."
+            );
+    
+            return;
+        }
+    
+    
+        if (transcriptRequestRunning) {
+    
+            return;
+    
+        }
+    
+    
+        transcriptRequestRunning = true;
+    
+        button.disabled = true;
+    
+        button.innerHTML =
+            '<span class="loader"></span> Getting Transcript...';
+    
+    
+        showStatus(
+            '<span class="loader"></span> Extracting transcript...'
         );
-
-
-    status.innerHTML =
-        message;
-
-
-    status.classList.add(
-        "show"
-    );
-
-}
-
-</script>
-
-</body>
-</html>
+    
+    
+        try {
+    
+            const controller =
+                new AbortController();
+    
+    
+            const timeout =
+                setTimeout(
+                    () => controller.abort(),
+                    30000
+                );
+    
+    
+            const response =
+                await fetch(
+                    "/transcript",
+                    {
+    
+                        method: "POST",
+    
+                        headers: {
+                            "Content-Type":
+                                "application/json"
+                        },
+    
+                        body: JSON.stringify({
+    
+                            url: url,
+    
+                            language_code:
+                                languageCode
+    
+                        }),
+    
+                        signal:
+                            controller.signal
+    
+                    }
+                );
+    
+    
+            clearTimeout(timeout);
+    
+    
+            let data = {};
+    
+            try {
+    
+                data =
+                    await response.json();
+    
+            } catch {
+    
+                throw new Error(
+                    `Server returned an invalid response (${response.status}).`
+                );
+    
+            }
+    
+    
+            if (
+                !response.ok ||
+                !data.success
+            ) {
+    
+                throw new Error(
+                    data.message ||
+                    "Failed to retrieve transcript."
+                );
+    
+            }
+    
+    
+            document.getElementById(
+                "originalTranscript"
+            ).value =
+                data.text || "";
+    
+    
+            document.getElementById(
+                "originalLanguage"
+            ).textContent =
+                data.language || languageCode;
+    
+    
+            window.currentSourceLanguage =
+                data.language_code ||
+                languageCode;
+    
+    
+            document.getElementById(
+                "translatedTranscript"
+            ).value = "";
+    
+    
+            document.getElementById(
+                "translatedLanguage"
+            ).textContent =
+                "TRANSLATED";
+    
+    
+            showStatus(
+                `✅ ${data.language || languageCode} transcript extracted successfully.`
+            );
+    
+    
+        } catch (error) {
+    
+            if (
+                error.name ===
+                "AbortError"
+            ) {
+    
+                showStatus(
+                    "❌ Transcript request timed out."
+                );
+    
+            } else {
+    
+                showStatus(
+                    "❌ " +
+                    (
+                        error.message ||
+                        "Failed to get transcript."
+                    )
+                );
+    
+            }
+    
+        } finally {
+    
+            transcriptRequestRunning = false;
+    
+            button.disabled = false;
+    
+            button.innerHTML =
+                "✨ Get Transcript";
+    
+        }
+    
+    }
+    
+    
+    /* =====================================================
+       TRANSLATE TRANSCRIPT
+    ===================================================== */
+    
+    async function translateTranscript() {
+    
+        const text =
+            document.getElementById(
+                "originalTranscript"
+            ).value.trim();
+    
+    
+        const targetSelect =
+            document.getElementById(
+                "translationLanguage"
+            );
+    
+    
+        const targetLanguage =
+            targetSelect.value;
+    
+    
+        const targetName =
+            targetSelect.options[
+                targetSelect.selectedIndex
+            ].text;
+    
+    
+        const sourceLanguage =
+            window.currentSourceLanguage ||
+            "";
+    
+    
+        if (!text) {
+    
+            showStatus(
+                "⚠️ First get the original transcript."
+            );
+    
+            return;
+        }
+    
+    
+        if (!sourceLanguage) {
+    
+            showStatus(
+                "⚠️ Please get the transcript first."
+            );
+    
+            return;
+        }
+    
+    
+        if (!targetLanguage) {
+    
+            showStatus(
+                "⚠️ Please select translation language."
+            );
+    
+            return;
+        }
+    
+    
+        if (translationRequestRunning) {
+    
+            return;
+    
+        }
+    
+    
+        translationRequestRunning = true;
+    
+    
+        const button =
+            document.querySelector(
+                'button[onclick="translateTranscript()"]'
+            );
+    
+    
+        button.disabled = true;
+    
+        button.innerHTML =
+            '<span class="loader"></span> Translating...';
+    
+    
+        showStatus(
+            '<span class="loader"></span> Translating transcript...'
+        );
+    
+    
+        try {
+    
+            const controller =
+                new AbortController();
+    
+    
+            const timeout =
+                setTimeout(
+                    () => controller.abort(),
+                    120000
+                );
+    
+    
+            const response =
+                await fetch(
+                    "/translate",
+                    {
+    
+                        method: "POST",
+    
+                        headers: {
+                            "Content-Type":
+                                "application/json"
+                        },
+    
+                        body: JSON.stringify({
+    
+                            text: text,
+    
+                            source_language:
+                                sourceLanguage,
+    
+                            target_language:
+                                targetLanguage
+    
+                        }),
+    
+                        signal:
+                            controller.signal
+    
+                    }
+                );
+    
+    
+            clearTimeout(timeout);
+    
+    
+            let data = {};
+    
+            try {
+    
+                data =
+                    await response.json();
+    
+            } catch {
+    
+                throw new Error(
+                    `Server returned an invalid response (${response.status}).`
+                );
+    
+            }
+    
+    
+            if (
+                !response.ok ||
+                !data.success
+            ) {
+    
+                throw new Error(
+                    data.message ||
+                    "Translation failed."
+                );
+    
+            }
+    
+    
+            document.getElementById(
+                "translatedTranscript"
+            ).value =
+                data.text || "";
+    
+    
+            document.getElementById(
+                "translatedLanguage"
+            ).textContent =
+                targetName;
+    
+    
+            showStatus(
+                `✅ ${targetName} translation completed successfully.`
+            );
+    
+    
+        } catch (error) {
+    
+            if (
+                error.name ===
+                "AbortError"
+            ) {
+    
+                showStatus(
+                    "❌ Translation timed out. Please try a shorter transcript."
+                );
+    
+            } else {
+    
+                showStatus(
+                    "❌ " +
+                    (
+                        error.message ||
+                        "Translation failed."
+                    )
+                );
+    
+            }
+    
+        } finally {
+    
+            translationRequestRunning = false;
+    
+            button.disabled = false;
+    
+            button.innerHTML =
+                "🌐 Translate Transcript";
+    
+        }
+    
+    }
+    
+    
+    /* =====================================================
+       DOWNLOAD PDF
+    ===================================================== */
+    
+    async function downloadPDF() {
+    
+        const original =
+            document.getElementById(
+                "originalTranscript"
+            ).value.trim();
+    
+    
+        const translated =
+            document.getElementById(
+                "translatedTranscript"
+            ).value.trim();
+    
+    
+        const targetSelect =
+            document.getElementById(
+                "translationLanguage"
+            );
+    
+    
+        const targetLanguage =
+            targetSelect.value;
+    
+    
+        const languageNames = {
+    
+            "en": "English",
+            "hi": "Hindi",
+            "bn": "Bengali",
+            "te": "Telugu",
+            "mr": "Marathi",
+            "ta": "Tamil",
+            "gu": "Gujarati",
+            "kn": "Kannada",
+            "ml": "Malayalam",
+            "pa": "Punjabi",
+            "ur": "Urdu",
+            "or": "Odia",
+            "as": "Assamese",
+    
+            "es": "Spanish",
+            "fr": "French",
+            "de": "German",
+            "it": "Italian",
+            "pt": "Portuguese",
+    
+            "ja": "Japanese",
+            "ko": "Korean",
+            "zh-CN": "Chinese",
+            "ar": "Arabic",
+            "ru": "Russian"
+    
+        };
+    
+    
+        if (!original && !translated) {
+    
+            showStatus(
+                "⚠️ There is no transcript to export."
+            );
+    
+            return;
+        }
+    
+    
+        if (!targetLanguage) {
+    
+            showStatus(
+                "⚠️ Please select a translation language."
+            );
+    
+            return;
+        }
+    
+    
+        const languageName =
+            languageNames[targetLanguage] ||
+            "Transcript";
+    
+    
+        showStatus(
+            '<span class="loader"></span> Creating PDF...'
+        );
+    
+    
+        try {
+    
+            const response =
+                await fetch(
+                    "/download-pdf",
+                    {
+    
+                        method: "POST",
+    
+                        headers: {
+                            "Content-Type":
+                                "application/json"
+                        },
+    
+                        body: JSON.stringify({
+    
+                            original_text:
+                                original,
+    
+                            translated_text:
+                                translated,
+    
+                            source_language:
+                                window.currentSourceLanguage ||
+                                "",
+    
+                            target_language:
+                                targetLanguage
+    
+                        })
+    
+                    }
+                );
+    
+    
+            if (!response.ok) {
+    
+                const data =
+                    await response.json().catch(
+                        () => ({})
+                    );
+    
+    
+                throw new Error(
+                    data.message ||
+                    "PDF generation failed."
+                );
+    
+            }
+    
+    
+            const blob =
+                await response.blob();
+    
+    
+            const downloadUrl =
+                window.URL.createObjectURL(
+                    blob
+                );
+    
+    
+            const a =
+                document.createElement("a");
+    
+    
+            a.href =
+                downloadUrl;
+    
+    
+            a.download =
+                `AniScript_${languageName}.pdf`;
+    
+    
+            document.body.appendChild(a);
+    
+    
+            a.click();
+    
+    
+            a.remove();
+    
+    
+            window.URL.revokeObjectURL(
+                downloadUrl
+            );
+    
+    
+            showStatus(
+                `✅ AniScript_${languageName}.pdf downloaded successfully.`
+            );
+    
+    
+        } catch (error) {
+    
+            showStatus(
+                "❌ " +
+                (
+                    error.message ||
+                    "PDF generation failed."
+                )
+            );
+    
+        }
+    
+    }
+    
+    
+    /* =====================================================
+       STATUS MESSAGE
+    ===================================================== */
+    
+    function showStatus(message) {
+    
+        const status =
+            document.getElementById(
+                "status"
+            );
+    
+    
+        status.innerHTML =
+            message;
+    
+    
+        status.classList.add(
+            "show"
+        );
+    
+    }
+    
+    </script>

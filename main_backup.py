@@ -1,35 +1,277 @@
 from flask import Flask, render_template, request, jsonify, send_file
+
+import os
+import re
+import html
+import time
+import tempfile
+import unicodedata
+import requests
+
+from dotenv import load_dotenv
+
 from youtube_transcript_api import YouTubeTranscriptApi
 
-from reportlab.lib.pagesizes import A4
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.enums import TA_LEFT
-from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.ttfonts import TTFont
+# =========================================================
+# YOUTUBE TRANSCRIPT ERRORS
+# =========================================================
 
-import requests
-import re
-import os
-import tempfile
-import time
-import html
-import unicodedata
+try:
+    from youtube_transcript_api._errors import (
+        TranscriptsDisabled,
+        NoTranscriptFound,
+        VideoUnavailable,
+        CouldNotRetrieveTranscript,
+        RequestBlocked,
+        IpBlocked
+    )
+except ImportError:
+    TranscriptsDisabled = Exception
+    NoTranscriptFound = Exception
+    VideoUnavailable = Exception
+    CouldNotRetrieveTranscript = Exception
+    RequestBlocked = Exception
+    IpBlocked = Exception
 
 
 # =========================================================
-# FLASK
+# PROXY CONFIG
+# =========================================================
+
+try:
+    from youtube_transcript_api.proxies import (
+        WebshareProxyConfig,
+        GenericProxyConfig
+    )
+except ImportError:
+    WebshareProxyConfig = None
+    GenericProxyConfig = None
+
+
+# =========================================================
+# REPORTLAB
+# =========================================================
+
+from reportlab.lib.pagesizes import A4
+
+from reportlab.platypus import (
+    SimpleDocTemplate,
+    Paragraph,
+    Spacer
+)
+
+from reportlab.lib.styles import (
+    getSampleStyleSheet,
+    ParagraphStyle
+)
+
+from reportlab.lib.enums import TA_LEFT
+
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+
+
+# =========================================================
+# ENVIRONMENT
+# =========================================================
+
+load_dotenv()
+
+YOUTUBE_API_KEY = os.getenv(
+    "YOUTUBE_API_KEY",
+    ""
+).strip()
+
+
+# =========================================================
+# FLASK APP
 # =========================================================
 
 app = Flask(__name__)
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-FONT_DIR = os.path.join(BASE_DIR, "fonts")
+# =========================================================
+# PATHS
+# =========================================================
 
-TEMPLATE_DIR = os.path.join(BASE_DIR, "templates")
+BASE_DIR = os.path.dirname(
+    os.path.abspath(__file__)
+)
 
-STATIC_DIR = os.path.join(BASE_DIR, "static")
+FONT_DIR = os.path.join(
+    BASE_DIR,
+    "fonts"
+)
+
+TEMPLATE_DIR = os.path.join(
+    BASE_DIR,
+    "templates"
+)
+
+STATIC_DIR = os.path.join(
+    BASE_DIR,
+    "static"
+)
+
+
+# =========================================================
+# PROXY URL NORMALIZATION
+# =========================================================
+
+def normalize_proxy_url(proxy):
+
+    if not proxy:
+        return None
+
+    proxy = str(proxy).strip()
+
+    if not proxy:
+        return None
+
+    if proxy.startswith(
+        (
+            "http://",
+            "https://",
+            "socks5://",
+            "socks5h://"
+        )
+    ):
+        return proxy
+
+    return "http://" + proxy
+
+
+# =========================================================
+# CREATE YOUTUBE API
+# =========================================================
+
+def create_youtube_api():
+
+    webshare_username = os.getenv(
+        "WEBSHARE_PROXY_USERNAME",
+        ""
+    ).strip()
+
+    webshare_password = os.getenv(
+        "WEBSHARE_PROXY_PASSWORD",
+        ""
+    ).strip()
+
+    http_proxy = normalize_proxy_url(
+        os.getenv(
+            "YOUTUBE_HTTP_PROXY",
+            ""
+        )
+    )
+
+    https_proxy = normalize_proxy_url(
+        os.getenv(
+            "YOUTUBE_HTTPS_PROXY",
+            ""
+        )
+    )
+
+    # -----------------------------------------------------
+    # WEBSHARE
+    # -----------------------------------------------------
+
+    if (
+        webshare_username
+        and webshare_password
+    ):
+
+        if WebshareProxyConfig is None:
+
+            raise RuntimeError(
+                "WebshareProxyConfig is unavailable. "
+                "Please install youtube-transcript-api==1.2.4."
+            )
+
+        try:
+
+            print(
+                "YouTube API: Webshare proxy ENABLED"
+            )
+
+            return YouTubeTranscriptApi(
+                proxy_config=WebshareProxyConfig(
+                    proxy_username=webshare_username,
+                    proxy_password=webshare_password
+                )
+            )
+
+        except Exception as e:
+
+            print(
+                "WEBSHARE ERROR:",
+                repr(e)
+            )
+
+            raise RuntimeError(
+                "Webshare proxy configuration failed. "
+                "Please check WEBSHARE_PROXY_USERNAME "
+                "and WEBSHARE_PROXY_PASSWORD."
+            )
+
+
+    # -----------------------------------------------------
+    # GENERIC PROXY
+    # -----------------------------------------------------
+
+    if http_proxy or https_proxy:
+
+        if GenericProxyConfig is None:
+
+            raise RuntimeError(
+                "GenericProxyConfig is unavailable. "
+                "Please install youtube-transcript-api==1.2.4."
+            )
+
+        try:
+
+            print(
+                "YouTube API: Generic proxy ENABLED"
+            )
+
+            print(
+                "HTTP proxy:",
+                http_proxy
+            )
+
+            print(
+                "HTTPS proxy:",
+                https_proxy
+            )
+
+            return YouTubeTranscriptApi(
+                proxy_config=GenericProxyConfig(
+                    http_url=http_proxy,
+                    https_url=https_proxy
+                )
+            )
+
+        except Exception as e:
+
+            print(
+                "GENERIC PROXY ERROR:",
+                repr(e)
+            )
+
+            raise RuntimeError(
+                "Generic proxy configuration failed. "
+                "Please use a complete proxy URL."
+            )
+
+
+    # -----------------------------------------------------
+    # DIRECT
+    # -----------------------------------------------------
+
+    print(
+        "YouTube API: NO PROXY configured"
+    )
+
+    return YouTubeTranscriptApi()
 
 
 # =========================================================
@@ -37,6 +279,7 @@ STATIC_DIR = os.path.join(BASE_DIR, "static")
 # =========================================================
 
 TRANSLATION_LANGUAGES = {
+
     "en": "English",
     "hi": "Hindi",
     "bn": "Bengali",
@@ -50,62 +293,58 @@ TRANSLATION_LANGUAGES = {
     "ur": "Urdu",
     "or": "Odia",
     "as": "Assamese",
+
     "es": "Spanish",
     "fr": "French",
     "de": "German",
     "it": "Italian",
     "pt": "Portuguese",
+
     "ja": "Japanese",
     "ko": "Korean",
     "zh-CN": "Chinese",
+
     "ar": "Arabic",
     "ru": "Russian"
 }
 
 
 # =========================================================
-# NORMALIZE LANGUAGE
+# LANGUAGE NORMALIZATION
 # =========================================================
 
 def normalize_language(value):
 
-    if not value:
+    if value is None:
         return None
 
     value = str(value).strip()
 
+    if not value:
+        return None
+
     if value in TRANSLATION_LANGUAGES:
         return value
 
-    value_lower = value.lower()
-
-    for code, name in TRANSLATION_LANGUAGES.items():
-
-        if value_lower == name.lower():
-            return code
+    lower = value.lower()
 
     aliases = {
-        "zh": "zh-CN",
-        "chinese": "zh-CN",
-        "mandarin": "zh-CN",
-
-        "odia": "or",
-        "oriya": "or",
-
-        "assamese": "as",
 
         "english": "en",
         "hindi": "hi",
         "bengali": "bn",
         "bangla": "bn",
+        "telugu": "te",
         "marathi": "mr",
         "tamil": "ta",
-        "telugu": "te",
         "gujarati": "gu",
         "kannada": "kn",
         "malayalam": "ml",
         "punjabi": "pa",
         "urdu": "ur",
+        "odia": "or",
+        "oriya": "or",
+        "assamese": "as",
 
         "spanish": "es",
         "french": "fr",
@@ -115,21 +354,37 @@ def normalize_language(value):
 
         "japanese": "ja",
         "korean": "ko",
+
+        "chinese": "zh-CN",
+        "mandarin": "zh-CN",
+        "zh": "zh-CN",
+
         "arabic": "ar",
         "russian": "ru"
     }
 
-    return aliases.get(value_lower)
+    if lower in aliases:
+        return aliases[lower]
+
+    for code, name in TRANSLATION_LANGUAGES.items():
+
+        if lower == name.lower():
+            return code
+
+    return None
 
 
 # =========================================================
-# PDF FONTS
+# PDF FONT SYSTEM
 # =========================================================
 
 PDF_FONTS = {}
 
 
-def register_pdf_font(filename, font_name):
+def register_pdf_font(
+    filename,
+    font_name
+):
 
     path = os.path.join(
         FONT_DIR,
@@ -140,7 +395,7 @@ def register_pdf_font(filename, font_name):
 
         print(
             "PDF FONT NOT FOUND:",
-            path
+            filename
         )
 
         return False
@@ -168,14 +423,14 @@ def register_pdf_font(filename, font_name):
         print(
             "PDF FONT ERROR:",
             filename,
-            str(e)
+            repr(e)
         )
 
         return False
 
 
 # =========================================================
-# REGISTER PDF FONTS
+# REGISTER FONTS
 # =========================================================
 
 register_pdf_font(
@@ -250,10 +505,13 @@ register_pdf_font(
 
 
 # =========================================================
-# FONT FOR CHARACTER
+# CHARACTER -> FONT
 # =========================================================
 
-def font_for_character(char, previous_font=None):
+def font_for_character(
+    char,
+    previous_font=None
+):
 
     code = ord(char)
 
@@ -332,7 +590,7 @@ def font_for_character(char, previous_font=None):
         if "NotoSans" in PDF_FONTS:
             return "NotoSans"
 
-    # Latin / numbers / punctuation
+    # Latin / numbers
     if "NotoSans" in PDF_FONTS:
         return "NotoSans"
 
@@ -361,12 +619,12 @@ def validate_pdf_fonts(text):
 
         if font not in PDF_FONTS:
 
-            if font == "Helvetica":
-
-                if ord(char) < 128:
-
-                    previous_font = font
-                    continue
+            if (
+                font == "Helvetica"
+                and ord(char) < 128
+            ):
+                previous_font = font
+                continue
 
             missing.add(font)
 
@@ -375,14 +633,17 @@ def validate_pdf_fonts(text):
     if missing:
 
         raise Exception(
-            "Required PDF font missing: "
-            + ", ".join(sorted(missing))
-            + ". Please put the required Noto font files inside the fonts folder."
+            "Required PDF font is missing: "
+            + ", ".join(
+                sorted(missing)
+            )
+            + ". Put the required Noto font "
+              "file inside the fonts folder."
         )
 
 
 # =========================================================
-# MAKE RICH PDF TEXT
+# RICH PDF TEXT
 # =========================================================
 
 def make_rich_pdf_text(text):
@@ -396,7 +657,6 @@ def make_rich_pdf_text(text):
     def flush():
 
         nonlocal buffer
-        nonlocal current_font
 
         if not buffer:
             return
@@ -415,7 +675,9 @@ def make_rich_pdf_text(text):
 
         else:
 
-            result.append(content)
+            result.append(
+                content
+            )
 
         buffer = []
 
@@ -427,7 +689,6 @@ def make_rich_pdf_text(text):
         )
 
         if current_font is None:
-
             current_font = font
 
         if font != current_font:
@@ -444,7 +705,7 @@ def make_rich_pdf_text(text):
 
 
 # =========================================================
-# ADD PDF TEXT
+# ADD TEXT TO PDF
 # =========================================================
 
 def add_pdf_text(
@@ -453,7 +714,9 @@ def add_pdf_text(
     body_style
 ):
 
-    validate_pdf_fonts(text)
+    validate_pdf_fonts(
+        text
+    )
 
     for line in text.splitlines():
 
@@ -479,15 +742,28 @@ def add_pdf_text(
 
 
 # =========================================================
-# GET VIDEO ID
+# YOUTUBE VIDEO ID
 # =========================================================
 
 def get_video_id(url):
 
+    if not url:
+        return None
+
+    url = str(url).strip()
+
     patterns = [
 
-        r"(?:v=|youtu\.be/|youtube\.com/shorts/|youtube\.com/live/)"
+        r"(?:v=)([A-Za-z0-9_-]{11})",
+
+        r"(?:youtu\.be/)"
         r"([A-Za-z0-9_-]{11})",
+
+        r"(?:youtube\.com/shorts/)"
+        r"([A-Za-z0-9_-]{11})",
+
+        r"(?:youtube\.com/live/)"
+        r"([A-Za-z0-9_-]{11})"
 
     ]
 
@@ -505,38 +781,85 @@ def get_video_id(url):
 
 
 # =========================================================
-# GET AVAILABLE TRACKS
+# GET AVAILABLE TRANSCRIPTS
 # =========================================================
 
 def get_available_tracks(video_id):
 
-    api = YouTubeTranscriptApi()
+    try:
 
-    transcript_list = api.list(
-        video_id
-    )
+        api = create_youtube_api()
 
-    tracks = []
+        transcript_list = api.list(
+            video_id
+        )
 
-    for transcript in transcript_list:
+        tracks = []
 
-        tracks.append({
+        for transcript in transcript_list:
 
-            "language":
-                transcript.language,
+            tracks.append({
 
-            "language_code":
-                transcript.language_code,
+                "language":
+                    transcript.language,
 
-            "is_generated":
-                transcript.is_generated,
+                "language_code":
+                    transcript.language_code,
 
-            "is_translatable":
-                transcript.is_translatable
+                "is_generated":
+                    bool(transcript.is_generated),
 
-        })
+                "is_translatable":
+                    bool(transcript.is_translatable)
 
-    return tracks
+            })
+
+        return tracks
+
+    except TranscriptsDisabled:
+
+        raise RuntimeError(
+            "YouTube captions are disabled for this video. "
+            "Please choose another video that has subtitles/CC enabled."
+        )
+
+    except VideoUnavailable:
+
+        raise RuntimeError(
+            "This YouTube video is unavailable."
+        )
+
+    except NoTranscriptFound:
+
+        raise RuntimeError(
+            "No transcript/captions were found for this video."
+        )
+
+    except RequestBlocked:
+
+        raise RuntimeError(
+            "YouTube blocked the request from this server. "
+            "A working proxy may be required on Render."
+        )
+
+    except IpBlocked:
+
+        raise RuntimeError(
+            "YouTube blocked the server IP. "
+            "A working proxy may be required on Render."
+        )
+
+    except Exception as e:
+
+        print(
+            "GET TRACKS ERROR:",
+            repr(e)
+        )
+
+        raise RuntimeError(
+            "Could not retrieve YouTube captions: "
+            + str(e)
+        )
 
 
 # =========================================================
@@ -548,54 +871,121 @@ def fetch_transcript(
     language_code
 ):
 
-    api = YouTubeTranscriptApi()
+    try:
 
-    transcript_list = api.list(
-        video_id
-    )
+        api = create_youtube_api()
 
-    selected = None
-
-    for transcript in transcript_list:
-
-        if (
-            transcript.language_code
-            == language_code
-        ):
-
-            selected = transcript
-            break
-
-    if selected is None:
-
-        raise Exception(
-            f"Transcript language '{language_code}' "
-            "is not available for this video."
+        transcript_list = api.list(
+            video_id
         )
 
-    fetched = selected.fetch()
+        selected = None
 
-    text_parts = []
+        for transcript in transcript_list:
 
-    for item in fetched:
+            if (
+                transcript.language_code
+                == language_code
+            ):
 
-        if hasattr(item, "text"):
+                selected = transcript
+                break
 
-            text_parts.append(
-                item.text
+        if selected is None:
+
+            raise RuntimeError(
+                f"Transcript language "
+                f"'{language_code}' "
+                "is not available for this video."
             )
 
-        elif isinstance(item, dict):
+        fetched = selected.fetch()
 
-            text_parts.append(
-                item.get("text", "")
+        text_parts = []
+
+        for item in fetched:
+
+            if hasattr(
+                item,
+                "text"
+            ):
+
+                text_parts.append(
+                    item.text
+                )
+
+            elif isinstance(
+                item,
+                dict
+            ):
+
+                text_parts.append(
+                    item.get(
+                        "text",
+                        ""
+                    )
+                )
+
+        text = "\n".join(
+            text_parts
+        ).strip()
+
+        if not text:
+
+            raise RuntimeError(
+                "Transcript was found but contains no text."
             )
 
-    return (
-        "\n".join(text_parts),
-        selected.language,
-        selected.language_code
-    )
+        return (
+            text,
+            selected.language,
+            selected.language_code
+        )
+
+    except TranscriptsDisabled:
+
+        raise RuntimeError(
+            "YouTube captions are disabled for this video. "
+            "Please select a video with subtitles/CC enabled."
+        )
+
+    except VideoUnavailable:
+
+        raise RuntimeError(
+            "This YouTube video is unavailable."
+        )
+
+    except NoTranscriptFound:
+
+        raise RuntimeError(
+            "No transcript was found for the selected language."
+        )
+
+    except RequestBlocked:
+
+        raise RuntimeError(
+            "YouTube blocked this server request. "
+            "Please configure a working proxy on Render."
+        )
+
+    except IpBlocked:
+
+        raise RuntimeError(
+            "YouTube blocked the server IP. "
+            "Please configure a working proxy on Render."
+        )
+
+    except Exception as e:
+
+        print(
+            "FETCH TRANSCRIPT ERROR:",
+            repr(e)
+        )
+
+        raise RuntimeError(
+            "Transcript could not be retrieved: "
+            + str(e)
+        )
 
 
 # =========================================================
@@ -611,7 +1001,7 @@ def index():
 
 
 # =========================================================
-# LANGUAGES API
+# LANGUAGES
 # =========================================================
 
 @app.route(
@@ -623,40 +1013,82 @@ def languages():
     try:
 
         data = (
-            request.get_json(silent=True)
+            request.get_json(
+                silent=True
+            )
             or {}
         )
 
         url = str(
-            data.get("url", "")
+            data.get(
+                "url",
+                ""
+            )
         ).strip()
 
         if not url:
 
             return jsonify({
+
                 "success": False,
+
                 "message":
                     "Please enter a YouTube URL."
+
             }), 400
 
-        video_id = get_video_id(url)
+        video_id = get_video_id(
+            url
+        )
 
         if not video_id:
 
             return jsonify({
+
                 "success": False,
+
                 "message":
                     "Invalid YouTube URL."
+
             }), 400
 
         tracks = get_available_tracks(
             video_id
         )
 
+        if not tracks:
+
+            return jsonify({
+
+                "success": False,
+
+                "message":
+                    "No transcript languages are available for this video."
+
+            }), 404
+
         return jsonify({
+
             "success": True,
+
             "languages": tracks
+
         })
+
+    except RuntimeError as e:
+
+        print(
+            "LANGUAGE ERROR:",
+            repr(e)
+        )
+
+        return jsonify({
+
+            "success": False,
+
+            "message": str(e)
+
+        }), 400
 
     except Exception as e:
 
@@ -666,13 +1098,18 @@ def languages():
         )
 
         return jsonify({
+
             "success": False,
-            "message": str(e)
+
+            "message":
+                "Unable to retrieve YouTube captions. "
+                + str(e)
+
         }), 500
 
 
 # =========================================================
-# TRANSCRIPT API
+# TRANSCRIPT
 # =========================================================
 
 @app.route(
@@ -684,42 +1121,61 @@ def transcript():
     try:
 
         data = (
-            request.get_json(silent=True)
+            request.get_json(
+                silent=True
+            )
             or {}
         )
 
         url = str(
-            data.get("url", "")
+            data.get(
+                "url",
+                ""
+            )
         ).strip()
 
         language_code = str(
-            data.get("language_code", "")
+            data.get(
+                "language_code",
+                ""
+            )
         ).strip()
 
         if not url:
 
             return jsonify({
+
                 "success": False,
+
                 "message":
                     "Please enter a YouTube URL."
+
             }), 400
 
         if not language_code:
 
             return jsonify({
+
                 "success": False,
+
                 "message":
                     "Please select a transcript language."
+
             }), 400
 
-        video_id = get_video_id(url)
+        video_id = get_video_id(
+            url
+        )
 
         if not video_id:
 
             return jsonify({
+
                 "success": False,
+
                 "message":
                     "Invalid YouTube URL."
+
             }), 400
 
         (
@@ -746,6 +1202,21 @@ def transcript():
 
         })
 
+    except RuntimeError as e:
+
+        print(
+            "TRANSCRIPT ERROR:",
+            repr(e)
+        )
+
+        return jsonify({
+
+            "success": False,
+
+            "message": str(e)
+
+        }), 400
+
     except Exception as e:
 
         print(
@@ -758,13 +1229,14 @@ def transcript():
             "success": False,
 
             "message":
-                str(e)
+                "Unable to retrieve transcript: "
+                + str(e)
 
         }), 500
 
 
 # =========================================================
-# SOURCE LANGUAGE FALLBACK
+# SOURCE LANGUAGE DETECTION
 # =========================================================
 
 def detect_source_language(text):
@@ -779,25 +1251,41 @@ def detect_source_language(text):
         ("ta", 0x0B80, 0x0BFF),
         ("te", 0x0C00, 0x0C7F),
         ("kn", 0x0C80, 0x0CFF),
-        ("ml", 0x0D00, 0x0D7F),
+        ("ml", 0x0D00, 0x0D7F)
 
     ]
 
     for language, start, end in checks:
 
         count = sum(
+
             1
+
             for char in text
-            if start <= ord(char) <= end
+
+            if (
+                start
+                <= ord(char)
+                <= end
+            )
+
         )
 
         if count >= 3:
             return language
 
     arabic_count = sum(
+
         1
+
         for char in text
-        if 0x0600 <= ord(char) <= 0x06FF
+
+        if (
+            0x0600
+            <= ord(char)
+            <= 0x06FF
+        )
+
     )
 
     if arabic_count >= 3:
@@ -828,6 +1316,31 @@ def split_text(
         if not line:
             continue
 
+        if len(line) > max_chars:
+
+            if current:
+
+                chunks.append(
+                    current
+                )
+
+                current = ""
+
+            for start in range(
+                0,
+                len(line),
+                max_chars
+            ):
+
+                chunks.append(
+                    line[
+                        start:
+                        start + max_chars
+                    ]
+                )
+
+            continue
+
         if (
             len(current)
             + len(line)
@@ -843,12 +1356,18 @@ def split_text(
         else:
 
             if current:
-                chunks.append(current)
+
+                chunks.append(
+                    current
+                )
 
             current = line
 
     if current:
-        chunks.append(current)
+
+        chunks.append(
+            current
+        )
 
     return chunks
 
@@ -872,7 +1391,8 @@ def translate_chunk(
         "q": chunk,
 
         "langpair":
-            f"{source_language}|{target_language}"
+            f"{source_language}|"
+            f"{target_language}"
 
     }
 
@@ -930,24 +1450,29 @@ def translate_chunk(
                         translated
                     )
 
-            last_error = str(data)
+            last_error = str(
+                data
+            )
 
         except Exception as e:
 
             last_error = str(e)
 
-        time.sleep(2)
+        if attempt < 2:
+
+            time.sleep(2)
 
     raise Exception(
 
-        "Translation service is temporarily unavailable. "
+        "Translation service is temporarily "
+        "unavailable. "
         + last_error
 
     )
 
 
 # =========================================================
-# TRANSLATE TEXT
+# TRANSLATE COMPLETE TEXT
 # =========================================================
 
 def translate_text(
@@ -994,7 +1519,11 @@ def translate_text(
         target_language
     )
 
-    if source_language == target_language:
+    if (
+        source_language
+        == target_language
+    ):
+
         return text
 
     chunks = split_text(
@@ -1002,13 +1531,22 @@ def translate_text(
         450
     )
 
+    if not chunks:
+
+        raise Exception(
+            "Transcript could not be split for translation."
+        )
+
     translated_chunks = []
 
-    for index, chunk in enumerate(chunks):
+    for index, chunk in enumerate(
+        chunks
+    ):
 
         print(
             f"Translating chunk "
-            f"{index + 1}/{len(chunks)}..."
+            f"{index + 1}/"
+            f"{len(chunks)}..."
         )
 
         translated = translate_chunk(
@@ -1025,7 +1563,9 @@ def translate_text(
             translated
         )
 
-        time.sleep(1)
+        if index < len(chunks) - 1:
+
+            time.sleep(1)
 
     return "\n\n".join(
         translated_chunks
@@ -1045,42 +1585,53 @@ def translate():
     try:
 
         data = (
-            request.get_json(silent=True)
+            request.get_json(
+                silent=True
+            )
             or {}
         )
 
         text = str(
-            data.get("text", "")
+            data.get(
+                "text",
+                ""
+            )
         ).strip()
 
         target_language = normalize_language(
-            data.get("target_language", "")
+            data.get(
+                "target_language",
+                ""
+            )
         )
 
         source_language = normalize_language(
-            data.get("source_language", "")
+            data.get(
+                "source_language",
+                ""
+            )
         )
-
-        print("=" * 60)
-        print("TRANSLATE REQUEST")
-        print("SOURCE:", source_language)
-        print("TARGET:", target_language)
-        print("=" * 60)
 
         if not text:
 
             return jsonify({
+
                 "success": False,
+
                 "message":
                     "Transcript is empty."
+
             }), 400
 
         if not target_language:
 
             return jsonify({
+
                 "success": False,
+
                 "message":
                     "Invalid translation language."
+
             }), 400
 
         translated = translate_text(
@@ -1146,7 +1697,9 @@ def download_pdf():
     try:
 
         data = (
-            request.get_json(silent=True)
+            request.get_json(
+                silent=True
+            )
             or {}
         )
 
@@ -1178,7 +1731,10 @@ def download_pdf():
             )
         )
 
-        # Compatibility with older frontend
+        # -------------------------------------------------
+        # OLD FRONTEND COMPATIBILITY
+        # -------------------------------------------------
+
         if (
             not original_text
             and not translated_text
@@ -1192,6 +1748,7 @@ def download_pdf():
             ).strip()
 
             if old_text:
+
                 original_text = old_text
 
         if (
@@ -1208,19 +1765,27 @@ def download_pdf():
 
             }), 400
 
-        if translated_text and not target_language:
+        if (
+            translated_text
+            and not target_language
+        ):
 
             target_language = "en"
 
-        if original_text and not source_language:
+        if (
+            original_text
+            and not source_language
+        ):
 
-            source_language = detect_source_language(
-                original_text
+            source_language = (
+                detect_source_language(
+                    original_text
+                )
             )
 
-        # =================================================
-        # VALIDATE AVAILABLE FONTS
-        # =================================================
+        # -------------------------------------------------
+        # VALIDATE FONTS
+        # -------------------------------------------------
 
         if original_text:
 
@@ -1234,9 +1799,9 @@ def download_pdf():
                 translated_text
             )
 
-        # =================================================
-        # PDF FILE NAME
-        # =================================================
+        # -------------------------------------------------
+        # PDF NAME
+        # -------------------------------------------------
 
         if translated_text:
 
@@ -1262,7 +1827,8 @@ def download_pdf():
         )
 
         pdf_filename = (
-            f"AniScript_{safe_language_name}.pdf"
+            f"AniScript_"
+            f"{safe_language_name}.pdf"
         )
 
         pdf_path = os.path.join(
@@ -1273,9 +1839,9 @@ def download_pdf():
 
         )
 
-        # =================================================
-        # PDF DOCUMENT
-        # =================================================
+        # -------------------------------------------------
+        # DOCUMENT
+        # -------------------------------------------------
 
         document = SimpleDocTemplate(
 
@@ -1299,7 +1865,8 @@ def download_pdf():
 
             "NotoSans"
 
-            if "NotoSans" in PDF_FONTS
+            if "NotoSans"
+            in PDF_FONTS
 
             else "Helvetica"
 
@@ -1361,9 +1928,9 @@ def download_pdf():
 
         story = []
 
-        # =================================================
+        # -------------------------------------------------
         # TITLE
-        # =================================================
+        # -------------------------------------------------
 
         story.append(
 
@@ -1397,9 +1964,9 @@ def download_pdf():
             Spacer(1, 15)
         )
 
-        # =================================================
+        # -------------------------------------------------
         # ORIGINAL
-        # =================================================
+        # -------------------------------------------------
 
         if original_text:
 
@@ -1409,7 +1976,8 @@ def download_pdf():
 
                     source_language,
 
-                    source_language or "Original"
+                    source_language
+                    or "Original"
 
                 )
 
@@ -1442,9 +2010,9 @@ def download_pdf():
 
             )
 
-        # =================================================
+        # -------------------------------------------------
         # TRANSLATED
-        # =================================================
+        # -------------------------------------------------
 
         if translated_text:
 
@@ -1458,7 +2026,8 @@ def download_pdf():
 
                     target_language,
 
-                    target_language or "Translation"
+                    target_language
+                    or "Translation"
 
                 )
 
@@ -1491,15 +2060,17 @@ def download_pdf():
 
             )
 
-        # =================================================
+        # -------------------------------------------------
         # BUILD
-        # =================================================
+        # -------------------------------------------------
 
         document.build(
             story
         )
 
-        if not os.path.exists(pdf_path):
+        if not os.path.exists(
+            pdf_path
+        ):
 
             raise Exception(
                 "PDF file was not created."
@@ -1509,7 +2080,7 @@ def download_pdf():
             pdf_path
         )
 
-        if file_size == 0:
+        if file_size <= 0:
 
             raise Exception(
                 "Generated PDF is empty."
@@ -1557,21 +2128,35 @@ def download_pdf():
 
 
 # =========================================================
-# RUN
+# HEALTH CHECK
+# =========================================================
+
+@app.route(
+    "/health",
+    methods=["GET"]
+)
+def health():
+
+    return jsonify({
+
+        "status": "ok",
+
+        "service":
+            "AniScript Pro"
+
+    })
+
+
+# =========================================================
+# START SERVER
 # =========================================================
 
 if __name__ == "__main__":
 
-    # Local PC:
-    # http://127.0.0.1:5000
-    #
-    # Render:
-    # PORT is supplied automatically.
-
     port = int(
         os.environ.get(
             "PORT",
-            5000
+            "5000"
         )
     )
 
